@@ -24,49 +24,64 @@
 #include "Arduino.h"
 #include <lcdFont1.h>
 
-int lcdA0 = 12;
-int lcdRW = 11;
-int lcdEnable = 10;
-int displayPower = 13;
-int lcdDataPins[] = {9,8,7,6,5,4,3,2};
+const byte lcdA0 = 12;
+const byte lcdRW = 11;
+const byte lcdEnable = 10;
+const byte displayPower = 13;
+const byte lcdDataPins[] = {2,3,4,5,6,7,8,9};
 
-int currentLine = 0;
-int charNum = 0;
+byte currentLine = 0;
+byte hPos = 0;
+byte dwide = 0;
+
+static void DBmode(byte state)
+{
+	for(int i=0;i<8;i++){
+		pinMode(lcdDataPins[i], state);
+	}
+}
 
 void SED1531::init(){
 	pinMode(lcdA0, OUTPUT);
 	pinMode(lcdRW, OUTPUT);
 	pinMode(lcdEnable, OUTPUT);
-	for(int i=0;i<=7;i++){
-		pinMode(lcdDataPins[i], OUTPUT);
-		}
+	DBmode(OUTPUT);
 	//the following action causes the display to reset 
-	digitalWrite(displayPower, LOW);
-	delay(2000);
 	digitalWrite(displayPower, HIGH);
-   	delay(3000);
+	pinMode(displayPower, OUTPUT);
+	//delay(500);
+	digitalWrite(displayPower, HIGH);
+	delay(500);
 	//the following actions are performed to init the lcd
 	writecommand(0xe2);                                //reset display by soft
-	delay(1000);
+	delay(500);
 	writecommand(0xa1);                                //ADC select
 	writecommand(0xa2);                                //lcd bias 1/8
 	writecommand(0x2c);                                //power
+	delay(100);
 	writecommand(0x2e);                                //power
+	delay(100);
 	writecommand(0x2f);                                //power
+	delay(100);
 	writecommand(0xa6);                                //normal / reverse
 	writecommand(0x8f);                                //set electronic control
 	writecommand(0xa4);                                //display off
 	writecommand(0xaf);                                //display on
 	writecommand(0x40); 				               //sel dram line 1 for com1
-	}
+}
 
 void SED1531::setContrast(byte contrast){
 	writecommand(0x80+contrast);
-	}
+}
 
 void SED1531::inverse(byte reverse){
 	writecommand(0xA6+reverse);
-	}
+}
+
+void SED1531::doublewide(byte on)
+{
+	dwide = on;
+}
 
 void SED1531::setMarker(byte marker, boolean on){
 	byte highNibble, lowNibble;
@@ -90,99 +105,266 @@ void SED1531::setMarker(byte marker, boolean on){
 		case 6:
 			markerLCD = 78;			// arrow up
 			break;
-		}
+	}
 	lowNibble = markerLCD&0xf;
-	highNibble = markerLCD;
-	highNibble = highNibble >> 4;
+	highNibble = markerLCD >> 4;
 	bitSet(highNibble, 4);
 	writecommand(0xb6);
 	writecommand(highNibble);
 	writecommand(lowNibble);
 	writePixData(on);
-	}
+}
+
+void SED1531::setCol(byte col)
+{
+	writecommand(0x10+(col>>4));
+	writecommand(0x00+(col&0x0f));
+}
 
 void SED1531::setCursor(byte row){
-	byte page = 0xb0+(row);
-	writecommand(page);
-	writecommand(0x08);
-	writecommand(0x00);
+	writecommand(0xb0+row);
+	setCol(0);
+}
+
+void SED1531::setCursor(byte row, byte col){
+	writecommand(0xb0+row);
+	setCol(col);
+}
+
+static void setDB(byte data)
+{
+	for (int i = 0; i < 8; i++) {
+		digitalWrite(lcdDataPins[i], data&1);
+		data = data >> 1;
 	}
+}
+
+static byte getDB(void)
+{
+	uint8_t data;
+	for (int i = 0; i < 8 ; i++) {
+		data = data << 1;
+		data |= digitalRead(lcdDataPins[7-i]);
+	}
+	return (byte)data;
+	//return 0;
+}
 
 void SED1531::writecommand(byte cmd){
 	digitalWrite(lcdRW, LOW);
 	digitalWrite(lcdA0, LOW);
-	
+
 	byte data = cmd;
-	
-	for (int i = 7; i >= 0; i--) {
-		int value = data & 0x1;
-		digitalWrite(lcdDataPins[i], value);
-		data = data >> 1;
-	}
+
+	setDB(data);
 
 	digitalWrite(lcdEnable, HIGH);
 	delayMicroseconds(10);
 	digitalWrite(lcdEnable, LOW);
 	delayMicroseconds(10);
 	digitalWrite(lcdEnable, HIGH);
-	}
+}
+
+static byte scale2nib(byte b)
+{
+    return (((b*0x1111 & 0x8421) *
+            0x249 >> 9) & 0x55) * 3;
+}
 
 inline size_t SED1531::write(byte lcdData){
-	digitalWrite(lcdRW, LOW);
-	digitalWrite(lcdA0, HIGH);
-	
-	if(lcdData == '\n'|| charNum==17){
-		charNum = 0;
-		currentLine++;
-		if(currentLine==6){
+	if(lcdData == '\n'|| hPos>=100){
+		hPos = 0;
+		currentLine+=1+dwide;
+		if(currentLine>=6){
 			currentLine = 0;
-			setCursor(currentLine);
-			}
-		else{
-			setCursor(currentLine);
-			}
 		}
+		setCursor(currentLine);
+	}
 	else if(isprint(lcdData)){
-		charNum++;
 		byte character = lcdData - 32;
-		for(int col = 0;col<6;col++){
-			byte data = col<5?pgm_read_byte(&lcdFonts[character][col]):0;
-			for(int bit = 7;bit>=0;bit--){
-				byte value = data & 0x01;
-				digitalWrite(lcdDataPins[bit], value);
-				data = data >> 1;
-			digitalWrite(lcdEnable, HIGH);
-			delayMicroseconds(10);
-			digitalWrite(lcdEnable, LOW);
-			delayMicroseconds(10);
-			digitalWrite(lcdEnable, HIGH);
+		digitalWrite(lcdRW, LOW);
+		digitalWrite(lcdA0, HIGH);
+
+		if (dwide) {
+			for(int col = 0;col<6;col++){
+				byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
+				data = scale2nib(data&0x0f);
+				setDB(data);
+				digitalWrite(lcdEnable, HIGH);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, LOW);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, HIGH);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, LOW);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, HIGH);
 			}
+			setCursor(currentLine+1, hPos);
+			digitalWrite(lcdRW, LOW);
+			digitalWrite(lcdA0, HIGH);
+
+			for(int col = 0;col<6;col++){
+				byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
+				data = scale2nib(data>>4);
+				setDB(data);
+				digitalWrite(lcdEnable, HIGH);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, LOW);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, HIGH);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, LOW);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, HIGH);
+			}
+			hPos+=12;
+			setCursor(currentLine, hPos);
+		} else {
+			for(int col = 0;col<6;col++){
+				byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
+				setDB(data);
+				digitalWrite(lcdEnable, HIGH);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, LOW);
+				delayMicroseconds(10);
+				digitalWrite(lcdEnable, HIGH);
+			}
+			hPos+=6;
 		}
 	}
+}
 
 void SED1531::writePixData(byte lcdData){
 	digitalWrite(lcdRW, LOW);
 	digitalWrite(lcdA0, HIGH);
-	
+
 	byte data = lcdData;
-	
-	for (int i = 7; i >= 0 ; i--) {
-		int value = data & 0x01;
-		digitalWrite(lcdDataPins[i], value);
-		data = data >> 1;
-	}
-	
+
+	setDB(data);
+
 	digitalWrite(lcdEnable, HIGH);
 	delayMicroseconds(10);
 	digitalWrite(lcdEnable, LOW);
 	delayMicroseconds(10);
 	digitalWrite(lcdEnable, HIGH);
+	hPos++;
+}
+
+void SED1531::writePixData(byte lcdData, byte mask){
+	writecommand(0xe0); // read-modify-write
+	/* data pins to input */
+	DBmode(INPUT);
+	digitalWrite(lcdRW, HIGH);
+	digitalWrite(lcdA0, HIGH);
+
+	digitalWrite(lcdEnable, HIGH);
+	delayMicroseconds(10);
+	digitalWrite(lcdEnable, LOW); // dummy read
+	delayMicroseconds(10);
+	digitalWrite(lcdEnable, HIGH);
+	delayMicroseconds(10);
+	digitalWrite(lcdEnable, LOW);
+	delayMicroseconds(10);
+
+	byte data = getDB();
+
+	digitalWrite(lcdEnable, HIGH);
+	/* data pins to output */
+	DBmode(OUTPUT);
+	digitalWrite(lcdRW, LOW);
+
+	data &= ~mask;
+	data |= lcdData & mask;
+
+	setDB(data);
+
+	delayMicroseconds(10);
+	digitalWrite(lcdEnable, LOW);
+	delayMicroseconds(10);
+	digitalWrite(lcdEnable, HIGH);
+	writecommand(0xee);
+	hPos++;
+	setCol(hPos);
+}
+
+void SED1531::writePixData(byte lcdData[], int len) {
+	digitalWrite(lcdRW, LOW);
+	digitalWrite(lcdA0, HIGH);
+
+	byte data;
+	for (int i=0; i<len; i++) {
+		data=0;
+		for (int j=0; j<8; j++) {
+			data>>=1;
+			data|=lcdData[j]&0x80;
+			lcdData[j]<<=1;
+		}
+		setDB(data);
+		digitalWrite(lcdEnable, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, HIGH);
 	}
+	hPos+=len;
+}
 
+void SED1531::writePixData(byte lcdData[], int len, byte mask) {
+	writecommand(0xe0); // read-modify-write
+	digitalWrite(lcdA0, HIGH);
 
-	
+	byte data;
+	for (int i=0; i<len; i++) {
+		/* data pins to input */
+		DBmode(INPUT);
+		digitalWrite(lcdRW, HIGH);
+
+		digitalWrite(lcdEnable, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW); // dummy read
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW);
+		delayMicroseconds(10);
+
+		data = getDB();
+
+		digitalWrite(lcdEnable, HIGH);
+		/* data pins to output */
+		DBmode(OUTPUT);
+		digitalWrite(lcdRW, LOW);
+
+		data &= ~mask;
+
+		byte ndata=0;
+		for (int j=0; j<8; j++) {
+			ndata>>=1;
+			ndata|=lcdData[j]&0x80;
+			lcdData[j]<<=1;
+		}
+		data |= ndata&mask;
+		setDB(data);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, HIGH);
+	}
+	writecommand(0xee);
+	hPos+=len;
+	setCol(hPos);
+}
+
+void SED1531::pixel(uint8_t x, uint8_t y, uint8_t val)
+{
+	setCursor(y/8, x);
+	val=val?0xff:0;
+	uint8_t mask=1<<(y%8);
+	writePixData(val, mask);
+}
+
 void SED1531::resetCursor() {
-        writecommand(0xEE);
-        writecommand(0x10);
-        writecommand(0x00);
-        }
+	writecommand(0xEE);
+	setCol(0);
+}
