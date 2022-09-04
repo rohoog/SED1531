@@ -18,21 +18,27 @@
  * 	    after the setMarker() routine
  *      added code to reset the display on init, without it the display
  *   	doesn't work reliable
+ * ---- 4/9/2022
+ *      remove the built-in character drawing
+ *      add the read-mode (and read/modify/write) -> no frame buffer in
+ *        ram needed.
+ *      add the adafruit GFX interface
  * */
 
 #include <SED1531.h>
 #include "Arduino.h"
-#include <lcdFont1.h>
+//#include <lcdFont1.h>
 
 const byte lcdA0 = 12;
 const byte lcdRW = 11;
 const byte lcdEnable = 10;
+/* somehow, the display doesn't initialize properly
+ * if the VCC is supplied directly (not from a IO pin) */
 const byte displayPower = 13;
 const byte lcdDataPins[] = {2,3,4,5,6,7,8,9};
 
 byte currentLine = 0;
 byte hPos = 0;
-byte dwide = 0;
 
 static void DBmode(byte state)
 {
@@ -50,11 +56,11 @@ void SED1531::init(){
 	digitalWrite(displayPower, HIGH);
 	pinMode(displayPower, OUTPUT);
 	//delay(500);
-	digitalWrite(displayPower, HIGH);
-	delay(500);
+	//digitalWrite(displayPower, HIGH);
+	delay(300);
 	//the following actions are performed to init the lcd
 	writecommand(0xe2);                                //reset display by soft
-	delay(500);
+	delay(300);
 	writecommand(0xa1);                                //ADC select
 	writecommand(0xa2);                                //lcd bias 1/8
 	writecommand(0x2c);                                //power
@@ -76,11 +82,6 @@ void SED1531::setContrast(byte contrast){
 
 void SED1531::inverse(byte reverse){
 	writecommand(0xA6+reverse);
-}
-
-void SED1531::doublewide(byte on)
-{
-	dwide = on;
 }
 
 void SED1531::setMarker(byte marker, boolean on){
@@ -121,12 +122,12 @@ void SED1531::setCol(byte col)
 	writecommand(0x00+(col&0x0f));
 }
 
-void SED1531::setCursor(byte row){
+void SED1531::setDCursor(byte row){
 	writecommand(0xb0+row);
 	setCol(0);
 }
 
-void SED1531::setCursor(byte row, byte col){
+void SED1531::setDCursor(byte row, byte col){
 	writecommand(0xb0+row);
 	setCol(col);
 }
@@ -147,7 +148,6 @@ static byte getDB(void)
 		data |= digitalRead(lcdDataPins[7-i]);
 	}
 	return (byte)data;
-	//return 0;
 }
 
 void SED1531::writecommand(byte cmd){
@@ -165,16 +165,11 @@ void SED1531::writecommand(byte cmd){
 	digitalWrite(lcdEnable, HIGH);
 }
 
-static byte scale2nib(byte b)
-{
-    return (((b*0x1111 & 0x8421) *
-            0x249 >> 9) & 0x55) * 3;
-}
-
+#if 0
 inline size_t SED1531::write(byte lcdData){
 	if(lcdData == '\n'|| hPos>=100){
 		hPos = 0;
-		currentLine+=1+dwide;
+		currentLine+=1;
 		if(currentLine>=6){
 			currentLine = 0;
 		}
@@ -185,55 +180,19 @@ inline size_t SED1531::write(byte lcdData){
 		digitalWrite(lcdRW, LOW);
 		digitalWrite(lcdA0, HIGH);
 
-		if (dwide) {
-			for(int col = 0;col<6;col++){
-				byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
-				data = scale2nib(data&0x0f);
-				setDB(data);
-				digitalWrite(lcdEnable, HIGH);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, LOW);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, HIGH);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, LOW);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, HIGH);
-			}
-			setCursor(currentLine+1, hPos);
-			digitalWrite(lcdRW, LOW);
-			digitalWrite(lcdA0, HIGH);
-
-			for(int col = 0;col<6;col++){
-				byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
-				data = scale2nib(data>>4);
-				setDB(data);
-				digitalWrite(lcdEnable, HIGH);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, LOW);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, HIGH);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, LOW);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, HIGH);
-			}
-			hPos+=12;
-			setCursor(currentLine, hPos);
-		} else {
-			for(int col = 0;col<6;col++){
-				byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
-				setDB(data);
-				digitalWrite(lcdEnable, HIGH);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, LOW);
-				delayMicroseconds(10);
-				digitalWrite(lcdEnable, HIGH);
-			}
-			hPos+=6;
+		for(int col = 0;col<6;col++){
+			byte data = col<5?pgm_read_byte_near(&lcdFonts[character][col]):0;
+			setDB(data);
+			digitalWrite(lcdEnable, HIGH);
+			delayMicroseconds(10);
+			digitalWrite(lcdEnable, LOW);
+			delayMicroseconds(10);
+			digitalWrite(lcdEnable, HIGH);
 		}
+		hPos+=6;
 	}
 }
+#endif
 
 void SED1531::writePixData(byte lcdData){
 	digitalWrite(lcdRW, LOW);
@@ -295,6 +254,7 @@ void SED1531::writePixData(byte lcdData[], int len) {
 	byte data;
 	for (int i=0; i<len; i++) {
 		data=0;
+
 		for (int j=0; j<8; j++) {
 			data>>=1;
 			data|=lcdData[j]&0x80;
@@ -308,6 +268,46 @@ void SED1531::writePixData(byte lcdData[], int len) {
 		digitalWrite(lcdEnable, HIGH);
 	}
 	hPos+=len;
+}
+
+void SED1531::writePixData(byte ndata, int len, byte mask) {
+	writecommand(0xe0); // read-modify-write
+	digitalWrite(lcdA0, HIGH);
+
+	byte data;
+	for (int i=0; i<len; i++) {
+		/* data pins to input */
+		DBmode(INPUT);
+		digitalWrite(lcdRW, HIGH);
+
+		digitalWrite(lcdEnable, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW); // dummy read
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, HIGH);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW);
+		delayMicroseconds(10);
+
+		data = getDB();
+
+		digitalWrite(lcdEnable, HIGH);
+		/* data pins to output */
+		DBmode(OUTPUT);
+		digitalWrite(lcdRW, LOW);
+
+		data &= ~mask;
+
+		data |= ndata&mask;
+		setDB(data);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, LOW);
+		delayMicroseconds(10);
+		digitalWrite(lcdEnable, HIGH);
+	}
+	writecommand(0xee);
+	hPos+=len;
+	setCol(hPos);
 }
 
 void SED1531::writePixData(byte lcdData[], int len, byte mask) {
@@ -356,15 +356,104 @@ void SED1531::writePixData(byte lcdData[], int len, byte mask) {
 	setCol(hPos);
 }
 
-void SED1531::pixel(uint8_t x, uint8_t y, uint8_t val)
+void SED1531::drawPixel(uint8_t x, uint8_t y, uint8_t val)
 {
-	setCursor(y/8, x);
+	setDCursor(y/8, x);
 	val=val?0xff:0;
 	uint8_t mask=1<<(y%8);
 	writePixData(val, mask);
+}
+
+void SED1531::drawVline(uint8_t x, uint8_t y, uint8_t h, uint8_t val)
+{
+	val=val?0xff:0;
+	uint8_t mask=~((1<<(y%8))-1);
+	h+=y%8;
+	y/=8;
+	for (;h;h-=8) {
+		setDCursor(y, x);
+		if (h<8) {
+			mask&=(1<<h)-1;
+			writePixData(val,mask);
+			break;
+		}
+		writePixData(val,mask);
+		mask=~0;
+		y++;
+	}
+}
+
+void SED1531::drawHline(uint8_t x, uint8_t y, uint8_t w, uint8_t val)
+{
+	setDCursor(y/8, x);
+	val=val?0xff:0;
+	uint8_t mask=1<<(y%8);
+	writePixData(val, w, mask);
+}
+
+void SED1531::drawFrect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t val)
+{
+	val=val?0xff:0;
+	uint8_t mask=~((1<<(y%8))-1);
+	h+=y%8;
+	y/=8;
+	for (;h;h-=8) {
+		setDCursor(y, x);
+		if (h<8) {
+			mask&=(1<<h)-1;
+			writePixData(val,w,mask);
+			break;
+		}
+		writePixData(val,w,mask);
+		mask=~0;
+		y++;
+	}
 }
 
 void SED1531::resetCursor() {
 	writecommand(0xEE);
 	setCol(0);
 }
+
+/* Adafruit_GFX i/f */
+
+void SED1531::drawPixel(int16_t x, int16_t y, uint16_t color)
+{
+	if (x&~0xff) return;
+	if (y&~0xff) return;
+	drawPixel((uint8_t)x, (uint8_t)y, (uint8_t)(color!=0));
+}
+
+void SED1531::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color)
+{
+	if (x&~0xff) return;
+	if (y>0xff) return;
+	if (y<0) { h+=y; y=0; }
+	if (h<=0) return;
+	if (y+h>0xff) { h=0xff-y; }
+	drawVline((uint8_t)x, (uint8_t)y, (uint8_t)h, (uint8_t)(color!=0));
+}
+
+void SED1531::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color)
+{
+	if (y&~0xff) return;
+	if (x>0xff) return;
+	if (x<0) { w+=x; x=0; }
+	if (w<=0) return;
+	if (x+w>0xff) { w=0xff-x; }
+	drawHline((uint8_t)x, (uint8_t)y, (uint8_t)w, (uint8_t)(color!=0));
+}
+
+void SED1531::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
+{
+	if (x>0xff) return;
+	if (x<0) { w+=x; x=0; }
+	if (w<=0) return;
+	if (x+w>0xff) { w=0xff-x; }
+	if (y>0xff) return;
+	if (y<0) { h+=y; y=0; }
+	if (h<=0) return;
+	if (y+h>0xff) { h=0xff-y; }
+	drawFrect((uint8_t)x, (uint8_t)y, (uint8_t)w, (uint8_t)h, (uint8_t)(color!=0));
+}
+
