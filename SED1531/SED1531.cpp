@@ -29,9 +29,9 @@
 #include "Arduino.h"
 //#include <lcdFont1.h>
 
-const byte lcdA0 = 12;
-const byte lcdRW = 11;
-const byte lcdEnable = 10;
+const byte lcdA0 = 10;
+const byte lcdRW = 9;
+const byte lcdEnable = 8;
 const byte lcdDataPins[] = {A0,A1,A2,A3,A4,A5,6,7};
 
 //byte currentLine = 0;
@@ -66,7 +66,7 @@ void SED1531::init(){
 	delay(10);
 	writecommand(0xa6);                                //normal / reverse
 	writecommand(0x8f);                                //set electronic control
-	writecommand(0xa4);                                //display off
+	//writecommand(0xa4);                                //display off
 	writecommand(0xaf);                                //display on
 	writecommand(0x40); 				               //sel dram line 1 for com1
 }
